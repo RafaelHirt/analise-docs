@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Análise Docs · Organizar relatório salvo</title>
+  <link rel="stylesheet" href="/relatorio-conferencia-pagina.css?v=2">
+  <script src="/leitores.js?v=1" defer></script>
+  <script src="/conferencia-documental.js?v=2026-11-07" defer></script>
+  <script src="/conferencia-fontes.js?v=1" defer></script>
+  <script src="/relatorio-conferencia.js?v=5" defer></script>
+  <script src="/conferencia-compartilhar.js?v=4" defer></script>
+  <script src="/relatorio-conferencia-pagina.js?v=3" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <span class="eyebrow">Análise Docs · Resultados salvos</span>
+      <h1>Veja os caminhos dos documentos com clareza</h1>
+      <p>Abra o CSV que você já baixou da Análise Docs. Os pedidos da SES e os arquivos encontrados serão organizados abaixo, com caminho, página e trecho em destaque.</p>
+    </header>
+    <section class="controls" aria-labelledby="titulo-arquivo">
+      <h2 id="titulo-arquivo">1. Escolha o CSV salvo</h2>
+      <label for="relatorio-csv">Arquivo exportado em “Exportar quadro CSV”</label>
+      <input id="relatorio-csv" type="file" accept=".csv,text/csv">
+      <p class="note">A conversão acontece no seu computador, sem envio do arquivo e sem consumo de créditos de IA. Você pode aproveitar a busca já realizada.</p>
+      <p id="relatorio-status" role="status" aria-live="polite">Selecione o CSV para visualizar o relatório.</p>
+      <div class="actions">
+        <button id="relatorio-salvar" type="button" disabled>Salvar relatório legível</button>
+        <button id="relatorio-imprimir" type="button" class="secondary" disabled>Imprimir / salvar PDF</button>
+        <button id="relatorio-imagem" type="button" class="secondary" disabled>Gerar imagem para compartilhar</button>
+      </div>
+      <p class="note">O relatório salvo abre no navegador mesmo sem internet. Os PDFs continuam na sua pasta original.</p>
+    </section>
+    <section id="relatorio-fontes" class="controls" hidden aria-labelledby="titulo-fontes">
+      <h2 id="titulo-fontes">Contexto dos pedidos da SES</h2>
+      <label for="relatorio-ses">Documentos originais da SES (.pdf)</label>
+      <input id="relatorio-ses" type="file" multiple accept=".pdf,application/pdf">
+      <p id="relatorio-fontes-status" class="note" role="status" aria-live="polite"></p>
+      <div id="relatorio-documentos-ses"></div>
+      <div id="relatorio-paginas-ses"></div>
+      <button id="relatorio-aplicar-fontes" type="button" disabled>Confirmar páginas e atualizar relatório</button>
+    </section>
+    <section id="relatorio-visualizacao" hidden aria-labelledby="titulo-visualizacao">
+      <h2 id="titulo-visualizacao">2. Confira os pedidos e os caminhos</h2>
+      <iframe id="relatorio-previa" title="Relatório dos pedidos da SES e caminhos das evidências" sandbox="allow-same-origin allow-modals"></iframe>
+    </section>
+  </main>
+</body>
+</html>

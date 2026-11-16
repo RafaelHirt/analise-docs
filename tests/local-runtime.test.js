@@ -1,0 +1,85 @@
+const { test } = require("node:test");
+const assert = require("node:assert/strict");
+const { mkdtemp, rm } = require("node:fs/promises");
+const { tmpdir } = require("node:os");
+const { join } = require("node:path");
+const { randomUUID } = require("node:crypto");
+
+test("standalone HTTP API authenticates, isolates analyses, versions writes and revokes sessions", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "analise-api-"));
+  const { startLocal } = await import("../scripts/dev-local.mjs");
+  const runtime = await startLocal({ port: 0, directory });
+  t.after(async () => { await runtime.close(); await rm(directory, { recursive: true, force: true }); });
+  const base = `http://127.0.0.1:${runtime.port}`;
+  const request = (path, options = {}) => fetch(`${base}/api/${path}`, options);
+  const body = (value, cookie, method = "POST") => ({ method, headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(value) });
+  assert.equal((await fetch(base)).status, 200);
+  assert.equal((await (await request("setup/status")).json()).configurado, false);
+  assert.equal((await request("analises")).status, 401);
+  assert.equal((await request("setup", body({ nome: "Admin", email: "a@example.test", senha: "curta" }))).status, 400);
+  const setup = await request("setup", body({ nome: "Admin", email: "a@example.test", senha: "senha-de-teste" }));
+  assert.equal(setup.status, 200);
+  const cookie = setup.headers.get("set-cookie").split(";")[0];
+  assert.match(setup.headers.get("set-cookie"), /HttpOnly; Secure; SameSite=Lax/);
+  assert.deepEqual(Object.keys(await setup.json()).sort(), ["email", "id", "nome", "perfil"]);
+  assert.equal((await request("setup", body({}))).status, 409);
+  assert.equal((await (await request("setup/status")).json()).configurado, true);
+  assert.equal((await request("auth/login", body({ email: "a@example.test", senha: "incorreta" }))).status, 401);
+  const login = await request("auth/login", body({ email: "a@example.test", senha: "senha-de-teste" }));
+  const otherSession = login.headers.get("set-cookie").split(";")[0];
+  const crossOrigin = body({ id: randomUUID(), nome: "Não gravar" }, cookie);
+  crossOrigin.headers.origin = "https://outro.example.test";
+  assert.equal((await request("analises", crossOrigin)).status, 403);
+  const newUser = { nome: "Analista", email: "b@example.test", senha: "outra-senha-teste", perfil: "analista" };
+  assert.equal((await request("users", body(newUser, cookie))).status, 201);
+  assert.equal((await request("users", body(newUser, cookie))).status, 409);
+  const second = await request("auth/login", body(newUser));
+  const secondCookie = second.headers.get("set-cookie").split(";")[0];
+  assert.equal((await request("users", body(newUser, secondCookie))).status, 403);
+  const id = randomUUID();
+  const analysis = { id, nome: "SES <img onerror=alert(1)>", estado: { versao: 1, pastaNome: "Entidade", achados: [{ descricao: "Comprovar FGTS", local: "Página 1" }] } };
+  const saved = await request("analises", body(analysis, cookie));
+  assert.equal(saved.status, 201);
+  assert.ok(saved.headers.get("x-record-version"));
+  assert.equal((await request("analises", body(analysis, cookie))).status, 200, "creation retries are idempotent");
+  const list = await (await request("analises", { headers: { cookie } })).json();
+  assert.equal(list.length, 1); assert.equal(list[0].pedidos, 1); assert.equal(list[0].nome, analysis.nome);
+  assert.deepEqual(await (await request("analises", { headers: { cookie: secondCookie } })).json(), []);
+  assert.equal((await request("analises/" + id, { headers: { cookie: secondCookie } })).status, 404);
+  const detail = await request("analises/" + id, { headers: { cookie } });
+  const version = detail.headers.get("x-record-version");
+  assert.ok(version); assert.equal((await detail.json()).estado.achados[0].descricao, "Comprovar FGTS");
+  assert.equal((await request("analises/" + id, body(analysis, cookie, "PUT"))).status, 428);
+  const update = body({ ...analysis, nome: "Nome revisado" }, cookie, "PUT"); update.headers["If-Match"] = version;
+  assert.equal((await request("analises/" + id, update)).status, 200);
+  assert.equal((await request("analises/" + id, update)).status, 409, "stale versions cannot overwrite newer work");
+  const huge = { ...analysis, estado: { versao: 1, achados: Array(61).fill({ descricao: "Pedido" }) } };
+  assert.equal((await request("analises", body(huge, cookie))).status, 400);
+  assert.equal((await request("contratos", { headers: { cookie } })).status, 404, "unrelated GEMOD modules are absent");
+  const ai = await (await request("analise-ia/status", { headers: { cookie } })).json();
+  assert.equal(typeof ai.disponivel, "boolean"); assert.equal(ai.exigeAutorizacao, true);
+  assert.equal((await request("analise-ia/extrair", body({ autorizado: true }, secondCookie))).status, 403);
+  assert.equal((await request("auth/trocar-senha", body({ senhaAtual: "errada", novaSenha: "nova-senha-teste" }, cookie))).status, 401);
+  const changed = await request("auth/trocar-senha", body({ senhaAtual: "senha-de-teste", novaSenha: "nova-senha-teste" }, cookie));
+  assert.equal(changed.status, 200);
+  const freshCookie = changed.headers.get("set-cookie").split(";")[0];
+  assert.equal((await request("auth/me", { headers: { cookie: otherSession } })).status, 401);
+  assert.equal((await request("auth/me", { headers: { cookie: freshCookie } })).status, 200);
+  assert.equal((await request("auth/logout", body({}, freshCookie))).status, 204);
+  assert.equal((await request("auth/me", { headers: { cookie: freshCookie } })).status, 401);
+});
+
+test("public bootstrap requires its server-side setup code before touching production storage", async () => {
+  const { handler } = require("../netlify/functions/api.js");
+  const previous = process.env.ANALISE_SETUP_TOKEN;
+  const event = { httpMethod: "POST", path: "/api/setup", headers: { "content-type": "application/json" }, body: "{}" };
+  try {
+    delete process.env.ANALISE_SETUP_TOKEN;
+    assert.equal((await handler(event)).statusCode, 503);
+    process.env.ANALISE_SETUP_TOKEN = "codigo-ficticio-apenas-para-teste";
+    assert.equal((await handler(event)).statusCode, 403);
+    assert.equal((await handler({ ...event, headers: { "content-type": "text/plain" } })).statusCode, 415);
+  } finally {
+    if (previous === undefined) delete process.env.ANALISE_SETUP_TOKEN; else process.env.ANALISE_SETUP_TOKEN = previous;
+  }
+});
